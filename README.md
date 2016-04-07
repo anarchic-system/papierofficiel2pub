@@ -1,1 +1,0 @@
-papierofficiel2pub.txt
