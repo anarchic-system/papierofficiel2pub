@@ -1,0 +1,369 @@
+= Timetombs — papierofficiel2pub
+
+
+
+
+
+
+
+
+[[id_introduction]]
+== Introduction
+
+
+[[id_introduction_goal]]
+=== Goal
+
+
+__papier_officiel2pub__ (aka __po2pub__) is a (trivial) shell script to share (send to a non-governmental entity) official documents such as a driving license, an invoice, a working permit, etc. without worrying (to much) about identity theft.
+
+This is achieved by
+
+. generating a “photocopy like” document (ie. with a quality that is barely good-enough and would certainly not support any modification to be reused in another context),
+. adding a watermark explicitly stating the document is a copy.
+
+
+
+
+[[id_introduction_process]]
+=== Process
+
+
+To reach this goal, __po2pub__ is going through three steps:
+
+. __resize__ (see <<id_resize>>): resize the original, high quality scan (several tens of mega bytes often) to a much lower size, allowing to easily send the document through email (decrease risk of bouncing)
+. __photocopy filter__ (see <<id_photocopy_filter>>): apply a “photocopy” filter that make the document looks like a photocopy with all the limits this kind of document had in the old times (80'),
+. __watermarking__ (see <<id_watermarking>>): apply a watermarking making it explicit it is a copy.
+
+
+
+
+[[id_introduction_precision]]
+=== Precisions
+
+
+The goal size of a document is arbitrarily set to 2 097 152 bytes (2 Mbi).
+
+The second step might be tried before the first one to get a “better” result.
+
+Those two first steps are generating an intermediary, temporary file used by the following step. Using a __tmpfs__ partition for __/tmp__ is probably a good idea.
+
+The third step requires a watermark. One is providedfootnote:[po2pub-watermark-stamp-copy.png] and the way to produce a new one, too (see <<id_create_watermark>>).
+
+
+
+
+[[id_introduction_dependency]]
+=== Dependencies
+
+
+This script depends on a few external binaries:
+
+* __ImageMagick__ (__convert__ and __composite__),
+* __bc__,
+* __mktemp__.
+
+
+
+
+[[id_introduction_todo]]
+=== TODO / next steps
+
+
+* Exit gracefully when there is not at least -s and -i options.
+* Add an option to set the goal size of the public document (used by the first step __Resize__ (see <<id_resize>>).
+* Do not generate intermediary, temporary files at the first two steps but pipe them.
+
+
+
+
+[[id_introduction_variable]]
+=== Variables
+
+
+* ++<path_stamp>++ [__po2pub-watermark-stamp-copy.png__]: the “stamp” to apply for watermarking the ++<path_image_out>++ document (see <<id_watermarking>> and <<id_create_watermark>>)
+* ++<path_image_in>++: the original, official document with private information that must not be shared as-is
+* ++<path_image_out>++: the output document, ready to be shared with __resize__, __photocopy filter__ and __watermark__ steps applied
+//* ++<ratio>++: resize ratio to apply to the ++<path_image_in>++
+* ++<image_size_max>++ [__2 097 152__]: maximum size one wish for the public version of the document (in bytes)
++
+[NOTE]
+.Size
+==========================================
+The final document will be less than the ++<image_size_max>++ value. Indeed, the step __Photocopy filter__ (see <<id_photocopy_filter>>) will reduce further more this size as it is changing the color space to __gray__.
+==========================================
+
+
+
+
+
+
+
+
+
+
+[[id_resize]]
+== Resize
+
+
+
+
+.References
+* http://www.imagemagick.org/Usage/filter/nicolas/[]
+
+.Goal
+The goal is to get an image file that is 2 097 152 bytes (2 Mbi).
+
+
+[NOTE]
+.__convert__ version
+==========================================
+__convert__ is __q16__ version (ie. not _q8__ or __hdri__). This has an impact on the “best” command to use.
+
+See __convert -version__.
+==========================================
+
+
+
+=== Get the file size
+
+To calculate the resize ratio, one needs the size of ++<path_image_in>++ file.
+
+.cli — stat — get file size (in bytes)
+------------------------------------------
+$ stat -c %s <path_image_in>
+FIXME
+------------------------------------------
+
+[NOTE]
+.Bad output
+==========================================
+Echo the command when formatting the ouput:
+
+10:55 lerouge@moneta % stat -c %s template2.png
+tat -c  template2.png25332318
+10:55 lerouge@moneta %
+==========================================
+
+.cli — wc — get file size (in bytes)
+------------------------------------------
+$ wc -c < <path_image_in>
+25332318
+$
+------------------------------------------
+
+
+[NOTE]
+.__stat__ vs __wc__
+==========================================
+__wc__ command can be longer than __stat__ when file is large (it must read it completely).
+==========================================
+
+//////////////////////////////////////////
+Several command line possibilities
+
+convert <filename_image_in> -distort Resize <ratio>% <filename_image_out>
+
+convert -resize <ratio>% <filename_image_in> <filename_image_out>
+
+The first one is (marginally) better than the second one and slower. The first one is more for upsampling.
+
+For downsampling, better use
+//////////////////////////////////////////
+
+
+
+=== Actual resize
+
+.cli — convert — downsize — “basic”
+------------------------------------------
+$ convert \
+	<path_image_in> \
+	-resize $(echo "scale=12; sqrt(2097152/$(wc -c < <path_image_in>))*100" | bc)% \
+	$TMP/papierofficiel2pub-reduced.png
+$
+------------------------------------------
+
+.cli — convert — downsize — “less basic”
+------------------------------------------
+$ convert \
+	<path_image_in> \
+	-colorspace RGB \
+	-filter Triangle \
+	-distort Resize $(echo "scale=12; sqrt(2097152/$(wc -c < <path_image_in>))*100" | bc)% \
+	-colorspace sRGB \
+	$TMP/papierofficiel2pub-reduced.png
+
+$
+------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+[[id_photocopy_filter]]
+== Photocopy filter
+
+
+
+
+.References
+* http://docs.gimp.org/en/plug-in-photocopy.html[]
+* https://www.imagemagick.org/discourse-server/viewtopic.php?t=14441[] -- thanks gch!
+* http://www.imagemagick.org/Usage/text/#draw[]
+
+
+.Goal
+The goal is to get a photocopy-like version of ++<path_image_in>++.
+
+
+.cli — convert — photocopy filter
+------------------------------------------
+$ convert \
+	$TMP/papierofficiel2pub-reduced.png \
+	-colorspace gray \
+	-contrast-stretch 10%x0% \
+	\( +clone -blur 0x2 \) \
+	\+swap \
+	-compose divide \
+	-composite \
+	$TMP/papierofficiel2pub-photocop.png
+$
+------------------------------------------
+
+[NOTE]
+.Image size
+==========================================
+The temporary, intermediary generated image is a bit smaller than the input one as the colorspace is now “gray”.
+==========================================
+
+.cli — shell — remove first intermediary, temporary image
+------------------------------------------
+$ rm -f $TMP/papierofficiel2pub-reduced.png
+$
+------------------------------------------
+
+
+
+
+
+
+
+
+
+
+[[id_watermarking]]
+== Watermarking
+
+
+
+.References
+* https://www.imagemagick.org/discourse-server/viewtopic.php?t=14441[] -- thanks gch!
+
+.Goal
+The goal is to get a document that is explicitly marked as being a copy.
+
+
+.cli — composite — insert the watermark
+------------------------------------------
+$ composite \
+	-tile po2pub-watermark-stamp-copy.png \
+	$TMP/papierofficiel2pub-photocop.png \
+	<path_image_out>
+$
+------------------------------------------
+
+.cli — shell — remove first intermediary, temporary image
+------------------------------------------
+$ rm -f $TMP/papierofficiel2pub-photocop.png
+$
+------------------------------------------
+
+
+
+
+
+
+
+
+
+
+[[id_create_watermark]]
+== Create a watermark
+
+
+
+
+This step is a one timer. Or, at worst, each time another kind of watermark is required.
+
+
+.References
+* https://www.imagemagick.org/discourse-server/viewtopic.php?t=14441[] -- thanks gch!
+
+.Goal
+The goal is to produce a “stamp” that can be used to watermark the document as being a copy at step __watermarking__ (see <<id_watermarking>>).
+
+
+.cli — convert — generate the stamp foreground
+------------------------------------------
+$ convert \
+	-size 150x75 xc:grey30 \
+	-font FreeSans \
+	-pointsize 12 \
+	-gravity NorthWest \
+		-draw "fill grey70 rotate -15 text 20,25 'Copy'" \
+	-gravity SouthEast \
+		-draw "fill grey70 rotate +15 text 20,15 'Copy'" \
+	stamp_fgnd.png
+$
+------------------------------------------
+
+
+.cli — convert — generate the stamp mask
+------------------------------------------
+$ convert \
+	-size 150x75 xc:black \
+	-font FreeSans        \
+	-pointsize 12         \
+	-gravity NorthWest    \
+		-draw		"fill white rotate -15	text 21,16 'Copy'  \
+													text 20,15 'Copy'  \
+					fill black 					text 19,14 'Copy'" \
+	-gravity SouthEast    \
+		-draw		"fill white rotate +15	text 21,16 'Copy'  \
+													text 20,15 'Copy'  \
+					fill black					text 19,14 'Copy'" \
+		\+matte            \
+		stamp_mask.png
+$
+------------------------------------------
+
+.cli — composite — generate the final stamp
+------------------------------------------
+$ composite \
+	-compose CopyOpacity \
+	stamp_mask.png  \
+	stamp_fgnd.png  \
+	po2pub-watermark-stamp-copy.png
+$
+------------------------------------------
+
+.cli — shell — remove intermediary steps
+------------------------------------------
+$ rm -f stamp_fgnd.png stamp_mask.png
+$
+------------------------------------------
+
+
+
+
+
+// vim: set ft=asciidoc spell spelllang=en:
