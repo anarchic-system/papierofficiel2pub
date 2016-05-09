@@ -1,0 +1,3 @@
+* take into account the resolution of <input>
+* take care of PDF as <input>
+* add an option to generate a PDF as <output> format
